@@ -1,7 +1,0 @@
-node_modules/
-__pycache__/
-*.pyc
-users.db
-yolov8n.pt
-traffic.mp4
-.env
