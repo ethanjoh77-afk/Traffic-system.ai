@@ -1,2 +1,3 @@
-const API_URL =
-"https://your-new-ngrok-link.ngrok-free.app";
+const API_URL = "https://YOUR-NGROK-LINK.ngrok-free.app";
+
+export default API_URL;
