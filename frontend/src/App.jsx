@@ -1,83 +1,155 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import Payment from "./components/Payment";
 
-export default function App() {
-  const [token, setToken] = useState(localStorage.getItem("token"));
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [data, setData] = useState({});
+function App() {
+  const [token, setToken] = useState(null);
+  const [form, setForm] = useState({
+    username: "",
+    password: ""
+  });
+  const [message, setMessage] = useState("");
 
-  const login = async () => {
-    const res = await fetch("http://127.0.0.1:5000/login", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({username,password})
+  // =========================
+  // LOAD TOKEN
+  // =========================
+  useEffect(() => {
+    const saved = localStorage.getItem("token");
+    if (saved) setToken(saved);
+  }, []);
+
+  // =========================
+  // HANDLE INPUT
+  // =========================
+  const handleChange = (e) => {
+    setForm({
+      ...form,
+      [e.target.name]: e.target.value
     });
-    const r = await res.json();
-    if(r.token){
-      localStorage.setItem("token", r.token);
-      setToken(r.token);
+  };
+
+  // =========================
+  // REGISTER
+  // =========================
+  const handleRegister = async () => {
+    try {
+      const res = await fetch("http://localhost:10000/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(form)
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setMessage("✅ Account created, login sasa");
+      } else {
+        setMessage("❌ " + data.msg);
+      }
+    } catch {
+      setMessage("❌ Server error");
     }
   };
 
-  const register = async () => {
-    await fetch("http://127.0.0.1:5000/register", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({username,password})
-    });
-    alert("registered");
+  // =========================
+  // LOGIN
+  // =========================
+  const handleLogin = async () => {
+    try {
+      const res = await fetch("http://localhost:10000/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(form)
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        localStorage.setItem("token", data.token);
+        setToken(data.token);
+        setMessage("✅ Login success");
+      } else {
+        setMessage("❌ " + data.msg);
+      }
+    } catch {
+      setMessage("❌ Server error");
+    }
   };
 
-  const pay = async () => {
-    const res = await fetch("http://127.0.0.1:5000/pay", {
-      headers:{Authorization:token}
-    });
-    const r = await res.json();
-    window.location.href = r.url;
+  // =========================
+  // LOGOUT
+  // =========================
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setToken(null);
   };
 
-  useEffect(()=>{
-    if(!token) return;
-
-    const i = setInterval(()=>{
-      fetch("http://127.0.0.1:5000/data", {
-        headers:{Authorization:token}
-      })
-      .then(res=>{
-        if(res.status===403){
-          alert("💳 Pay first!");
-          return {};
-        }
-        return res.json();
-      })
-      .then(setData);
-    },1000);
-
-    return ()=>clearInterval(i);
-  },[token]);
-
-  if(!token){
+  // =========================
+  // UI
+  // =========================
+  if (!token) {
     return (
-      <div>
-        <input onChange={e=>setUsername(e.target.value)} placeholder="user"/>
-        <input onChange={e=>setPassword(e.target.value)} type="password"/>
-        <button onClick={login}>login</button>
-        <button onClick={register}>register</button>
+      <div className="p-6 max-w-md mx-auto mt-20 bg-white shadow rounded-xl">
+        <h2 className="text-xl font-bold mb-4">🔐 Login / Register</h2>
+
+        <input
+          type="text"
+          name="username"
+          placeholder="Username"
+          className="w-full p-2 border mb-3 rounded"
+          onChange={handleChange}
+        />
+
+        <input
+          type="password"
+          name="password"
+          placeholder="Password"
+          className="w-full p-2 border mb-4 rounded"
+          onChange={handleChange}
+        />
+
+        <div className="flex gap-2">
+          <button
+            onClick={handleLogin}
+            className="flex-1 bg-blue-600 text-white p-2 rounded"
+          >
+            Login
+          </button>
+
+          <button
+            onClick={handleRegister}
+            className="flex-1 bg-gray-600 text-white p-2 rounded"
+          >
+            Register
+          </button>
+        </div>
+
+        {message && (
+          <p className="mt-4 text-center text-sm">{message}</p>
+        )}
       </div>
     );
   }
 
+  // =========================
+  // AFTER LOGIN
+  // =========================
   return (
     <div>
-      <h1>SaaS Dashboard</h1>
-      <button onClick={pay}>💳 Pay</button>
+      <div className="p-4 flex justify-between items-center bg-black text-white">
+        <h1>🚦 Traffic AI Dashboard</h1>
+        <button onClick={handleLogout} className="bg-red-500 px-3 py-1 rounded">
+          Logout
+        </button>
+      </div>
 
-      <img src={`http://127.0.0.1:5000/video?token=${token}`} width="600"/>
-
-      <h2>Cars {data.cars}</h2>
-      <h2>Buses {data.buses}</h2>
-      <h2>Trucks {data.trucks}</h2>
-      <h2>People {data.people}</h2>
+      {/* PAYMENT UI */}
+      <Payment />
     </div>
   );
 }
+
+export default App;

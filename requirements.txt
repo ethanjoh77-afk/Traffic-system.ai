@@ -1,7 +1,6 @@
 flask
-flask-cors
-ultralytics
-opencv-python
-numpy
-PyJWT
-stripe
+flask-jwt-extended
+requests
+python-dotenv
+gunicorn
+werkzeug

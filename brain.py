@@ -1,164 +1,306 @@
-from flask import Flask, jsonify, Response, request
-from flask_cors import CORS
-from ultralytics import YOLO
-import cv2
-import numpy as np
+from flask import Flask, request, jsonify
+import requests
+import base64
+import sqlite3
+import os
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-from tracker import ByteLikeTracker
-from auth import init_auth_db, register_user, login_user, verify_token, is_paid
-from payment import create_checkout_session, handle_webhook
+from flask_jwt_extended import (
+    JWTManager, jwt_required, get_jwt_identity, create_access_token
+)
+
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_cors import CORS
+
+# =========================
+# INIT
+# =========================
+load_dotenv()
 
 app = Flask(__name__)
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "secret")
+
+jwt = JWTManager(app)
 CORS(app)
 
-# ---------------- INIT ----------------
-init_auth_db()
+# =========================
+# DATABASE
+# =========================
+def init_db():
+    conn = sqlite3.connect("traffic.db")
+    c = conn.cursor()
 
-model = YOLO("yolov8n.pt")
-tracker = ByteLikeTracker()
+    c.execute("""CREATE TABLE IF NOT EXISTS users(
+        id INTEGER PRIMARY KEY,
+        username TEXT UNIQUE,
+        password TEXT,
+        phone TEXT UNIQUE
+    )""")
 
-cap = cv2.VideoCapture("traffic.mp4")
+    c.execute("""CREATE TABLE IF NOT EXISTS payments(
+        id INTEGER PRIMARY KEY,
+        phone TEXT,
+        provider TEXT,
+        amount REAL,
+        status TEXT,
+        tx_id TEXT UNIQUE,
+        expiry TEXT,
+        timestamp TEXT
+    )""")
 
-if not cap.isOpened():
-    print("❌ Video not found")
-    cap = None
+    conn.commit()
+    conn.close()
 
-latest_data = {
-    "cars": 0,
-    "buses": 0,
-    "trucks": 0,
-    "people": 0
-}
+init_db()
 
-# ---------------- VIDEO STREAM ----------------
-def generate_frames():
-    global latest_data
+# =========================
+# SAVE PAYMENT (SUBSCRIPTION)
+# =========================
+def save_payment(phone, amount, status, provider, tx_id):
+    conn = sqlite3.connect("traffic.db")
+    c = conn.cursor()
 
-    while True:
-        if cap is None:
-            frame = np.ones((480, 640, 3), dtype=np.uint8) * 255
-        else:
-            success, frame = cap.read()
-            if not success:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
+    # 1000 = 1 day
+    days = int(amount) // 1000
+    if days < 1:
+        days = 1
 
-        results = model(frame, verbose=False)
+    expiry_date = datetime.now() + timedelta(days=days)
 
-        detections = []
-        for r in results:
-            for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cls = int(box.cls[0])
-                name = model.names[cls]
+    try:
+        c.execute("""
+            INSERT INTO payments VALUES(NULL,?,?,?,?,?,?,?)
+        """, (
+            phone,
+            provider,
+            amount,
+            status,
+            tx_id,
+            expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+        conn.commit()
 
-                if name in ["car", "bus", "truck", "person"]:
-                    detections.append([x1, y1, x2, y2, name])
+        print("✅ ACTIVE UNTIL:", expiry_date)
 
-        tracked = tracker.update(detections)
+    except:
+        print("⚠️ Duplicate transaction blocked")
 
-        latest_data = {
-            "cars": len([o for o in tracked if o["class"] == "car"]),
-            "buses": len([o for o in tracked if o["class"] == "bus"]),
-            "trucks": len([o for o in tracked if o["class"] == "truck"]),
-            "people": len([o for o in tracked if o["class"] == "person"]),
-        }
+    conn.close()
 
-        for obj in tracked:
-            x1, y1, x2, y2 = obj["bbox"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+# =========================
+# CHECK SUBSCRIPTION
+# =========================
+def check_payment(phone):
+    conn = sqlite3.connect("traffic.db")
+    c = conn.cursor()
 
-        _, buffer = cv2.imencode(".jpg", frame)
-        frame_bytes = buffer.tobytes()
+    c.execute("""
+        SELECT expiry FROM payments
+        WHERE phone=? AND status='SUCCESS'
+        ORDER BY id DESC LIMIT 1
+    """, (phone,))
 
-        yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
+    row = c.fetchone()
+    conn.close()
 
-# ---------------- AUTH ----------------
+    if not row:
+        return False
+
+    expiry = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+
+    if datetime.now() > expiry:
+        return False
+
+    return True
+
+# =========================
+# REGISTER
+# =========================
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
-    return jsonify({
-        "success": register_user(data["username"], data["password"])
-    })
+    d = request.json
 
+    conn = sqlite3.connect("traffic.db")
+    c = conn.cursor()
+
+    try:
+        c.execute("""
+            INSERT INTO users VALUES(NULL,?,?,?)
+        """, (
+            d["username"],
+            generate_password_hash(d["password"]),
+            d["phone"]
+        ))
+        conn.commit()
+    except:
+        return jsonify({"msg": "User already exists"}), 400
+
+    conn.close()
+    return jsonify({"msg": "Registered successfully"})
+
+# =========================
+# LOGIN
+# =========================
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.json
-    token = login_user(data["username"], data["password"])
+    d = request.json
 
-    if token:
-        return jsonify({"token": token})
-    return jsonify({"error": "invalid"}), 401
+    conn = sqlite3.connect("traffic.db")
+    c = conn.cursor()
 
-# ---------------- PAYMENT ----------------
-@app.route("/pay")
+    c.execute("""
+        SELECT password, phone FROM users WHERE username=?
+    """, (d["username"],))
+
+    user = c.fetchone()
+    conn.close()
+
+    if user and check_password_hash(user[0], d["password"]):
+        return jsonify({
+            "token": create_access_token(identity=user[1])
+        })
+
+    return jsonify({"msg": "Invalid credentials"}), 401
+
+# =========================
+# MPESA TOKEN
+# =========================
+def get_token():
+    key = os.getenv("MPESA_CONSUMER_KEY")
+    secret = os.getenv("MPESA_CONSUMER_SECRET")
+
+    url = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+
+    res = requests.get(url, auth=(key, secret))
+    return res.json()["access_token"]
+
+# =========================
+# STK PUSH
+# =========================
+def stk_push(phone, amount):
+    token = get_token()
+
+    shortcode = os.getenv("MPESA_SHORTCODE")
+    passkey = os.getenv("MPESA_PASSKEY")
+
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+
+    password = base64.b64encode(
+        (shortcode + passkey + timestamp).encode()
+    ).decode()
+
+    url = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "BusinessShortCode": shortcode,
+        "Password": password,
+        "Timestamp": timestamp,
+        "TransactionType": "CustomerPayBillOnline",
+        "Amount": amount,
+        "PartyA": phone,
+        "PartyB": shortcode,
+        "PhoneNumber": phone,
+        "CallBackURL": os.getenv("CALLBACK_URL"),
+        "AccountReference": "TRAFFIC_AI",
+        "TransactionDesc": "Subscription Payment"
+    }
+
+    return requests.post(url, json=payload, headers=headers).json()
+
+# =========================
+# PAY (LOCKED USER PHONE)
+# =========================
+@app.route("/pay", methods=["POST"])
+@jwt_required()
 def pay():
-    token = request.headers.get("Authorization")
+    phone = get_jwt_identity()
+    amount = request.json["amount"]
 
-    if not token:
-        return jsonify({"error": "unauthorized"}), 401
+    res = stk_push(phone, amount)
 
-    user = verify_token(token)
+    return jsonify({
+        "msg": "STK PUSH SENT",
+        "phone": phone,
+        "response": res
+    })
 
-    if not user:
-        return jsonify({"error": "invalid token"}), 401
+# =========================
+# SECURE CALLBACK
+# =========================
+@app.route("/payment/callback", methods=["POST"])
+def callback():
+    data = request.json
 
-    url = create_checkout_session(user["username"])
+    if not data or "Body" not in data:
+        return jsonify({"msg": "invalid"}), 400
 
-    return jsonify({"url": url})
+    try:
+        cb = data["Body"]["stkCallback"]
 
-# ---------------- STRIPE WEBHOOK ----------------
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    payload = request.data
-    sig = request.headers.get("Stripe-Signature")
+        if cb.get("ResultCode") != 0:
+            return jsonify({"msg": "failed"}), 200
 
-    if handle_webhook(payload, sig):
-        return "", 200
+        items = cb.get("CallbackMetadata", {}).get("Item", [])
 
-    return "", 400
+        phone = None
+        amount = None
+        receipt = None
 
-# ---------------- PROTECTED DATA ----------------
+        for item in items:
+            if item["Name"] == "PhoneNumber":
+                phone = str(item["Value"])
+            elif item["Name"] == "Amount":
+                amount = float(item["Value"])
+            elif item["Name"] == "MpesaReceiptNumber":
+                receipt = item["Value"]
+
+        if not phone or not amount or not receipt:
+            return jsonify({"msg": "missing fields"}), 400
+
+        save_payment(
+            phone,
+            amount,
+            "SUCCESS",
+            "MPESA",
+            receipt
+        )
+
+        print("💰 PAYMENT VERIFIED:", phone, amount)
+
+    except Exception as e:
+        print("❌ ERROR:", str(e))
+        return jsonify({"msg": "error"}), 500
+
+    return jsonify({"msg": "ok"})
+
+# =========================
+# PROTECTED ROUTE
+# =========================
 @app.route("/data")
-def data():
-    token = request.headers.get("Authorization")
+@jwt_required()
+def protected():
+    phone = get_jwt_identity()
 
-    if not token:
-        return jsonify({"error": "unauthorized"}), 401
+    if not check_payment(phone):
+        return jsonify({
+            "msg": "SUBSCRIPTION EXPIRED ❌"
+        }), 403
 
-    user = verify_token(token)
+    return jsonify({
+        "msg": "ACCESS GRANTED ✅",
+        "phone": phone
+    })
 
-    if not user:
-        return jsonify({"error": "invalid token"}), 401
-
-    if not is_paid(user["username"]):
-        return jsonify({"error": "payment required"}), 403
-
-    return jsonify(latest_data)
-
-# ---------------- PROTECTED VIDEO ----------------
-@app.route("/video")
-def video():
-    token = request.args.get("token")
-
-    if not token:
-        return jsonify({"error": "unauthorized"}), 401
-
-    user = verify_token(token)
-
-    if not user:
-        return jsonify({"error": "invalid token"}), 401
-
-    if not is_paid(user["username"]):
-        return jsonify({"error": "payment required"}), 403
-
-    return Response(
-        generate_frames(),
-        mimetype="multipart/x-mixed-replace; boundary=frame"
-    )
-
-# ---------------- RUN (DEPLOY READY) ----------------
+# =========================
+# RUN LOCAL
+# =========================
 if __name__ == "__main__":
-    print("🚀 SaaS System Running (DEPLOY MODE)")
+    print("🚀 SYSTEM RUNNING LOCAL")
     app.run(host="0.0.0.0", port=10000)
