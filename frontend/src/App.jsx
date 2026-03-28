@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import Payment from "./components/Payment";
+import Payment from './components/payment';
 
 function App() {
   const [token, setToken] = useState(null);
