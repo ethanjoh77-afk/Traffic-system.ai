@@ -13,26 +13,38 @@ function App() {
   }, []);
 
   return (
-    <div style={{ padding: "20px", fontFamily: "Arial" }}>
-      <h1>🚦 Traffic AI System (LIVE DASHBOARD)</h1>
+    <div style={{
+      padding: "20px",
+      fontFamily: "Arial",
+      backgroundColor: "#0f172a",
+      color: "white",
+      minHeight: "100vh"
+    }}>
+      
+      <h1>🚦 Smart Traffic AI System</h1>
+      <p>LIVE DASHBOARD</p>
 
-      {/* PAYMENT SECTION (UKITAKA UNAWEZA KUIONDOA BAADAE) */}
       <Payment />
 
       <hr />
 
-      <h2>Live Traffic Data</h2>
+      <h2>📊 Live Traffic Data</h2>
 
       {data ? (
-        <div>
+        <div style={{
+          background: "#1e293b",
+          padding: "15px",
+          borderRadius: "10px"
+        }}>
           <p>🚗 Cars: {data.cars}</p>
           <p>🚌 Buses: {data.buses}</p>
           <p>🚚 Trucks: {data.trucks}</p>
           <p>🚶 People: {data.people}</p>
         </div>
       ) : (
-        <p>Loading data from AI...</p>
+        <p>Loading data...</p>
       )}
+
     </div>
   );
 }
