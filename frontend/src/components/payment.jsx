@@ -1,13 +1,45 @@
+import { useState } from "react";
+import API_URL from "../config";
+
 export default function Payment() {
+  const [msg, setMsg] = useState("");
+
+  const pay = async () => {
+    try {
+      const res = await fetch(`${API_URL}/pay/mock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: "user1" })
+      });
+
+      const data = await res.json();
+      setMsg(data.message);
+    } catch (err) {
+      setMsg("Payment failed");
+    }
+  };
+
   return (
     <div style={{
-      marginTop: "20px",
-      padding: "10px",
-      border: "1px solid gray",
-      borderRadius: "8px"
+      padding: "15px",
+      background: "#1e293b",
+      borderRadius: "10px",
+      marginBottom: "20px"
     }}>
-      <h3>💳 Payment System</h3>
-      <button>Pay Now</button>
+      <h3>💳 Subscription</h3>
+
+      <button
+        onClick={pay}
+        style={{
+          padding: "10px",
+          cursor: "pointer",
+          borderRadius: "5px"
+        }}
+      >
+        Unlock System
+      </button>
+
+      <p>{msg}</p>
     </div>
   );
 }
