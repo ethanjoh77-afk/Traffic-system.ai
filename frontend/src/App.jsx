@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import Payment from "./components/Payment.jsx";
+import Payment from "./components/Payment";
 import API_URL from "./config";
 
 function App() {

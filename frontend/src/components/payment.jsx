@@ -1,45 +1,41 @@
-import { useState } from "react";
-import API_URL from "../config";
+import React, { useState } from "react";
 
-export default function Payment() {
-  const [msg, setMsg] = useState("");
+const Payment = () => {
+  const [method, setMethod] = useState("");
 
-  const pay = async () => {
-    try {
-      const res = await fetch(`${API_URL}/pay/mock`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: "user1" })
-      });
-
-      const data = await res.json();
-      setMsg(data.message);
-    } catch (err) {
-      setMsg("Payment failed");
-    }
+  const handlePayment = (type) => {
+    setMethod(type);
+    alert(`Selected payment method: ${type}`);
   };
 
   return (
-    <div style={{
-      padding: "15px",
-      background: "#1e293b",
-      borderRadius: "10px",
-      marginBottom: "20px"
-    }}>
-      <h3>💳 Subscription</h3>
+    <div className="payment-container">
+      <div className="payment-card">
+        <h1>Payment Page</h1>
+        <p>Select your preferred payment method below</p>
 
-      <button
-        onClick={pay}
-        style={{
-          padding: "10px",
-          cursor: "pointer",
-          borderRadius: "5px"
-        }}
-      >
-        Unlock System
-      </button>
+        <div className="buttons">
+          <button onClick={() => handlePayment("Card")}>
+            Pay with Card
+          </button>
 
-      <p>{msg}</p>
+          <button onClick={() => handlePayment("Mobile Money")}>
+            Pay with Mobile Money
+          </button>
+
+          <button onClick={() => handlePayment("Bank Transfer")}>
+            Bank Transfer
+          </button>
+        </div>
+
+        {method && (
+          <div className="selected">
+            Selected: <b>{method}</b>
+          </div>
+        )}
+      </div>
     </div>
   );
-}
+};
+
+export default Payment;
